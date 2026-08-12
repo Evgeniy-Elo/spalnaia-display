@@ -1,0 +1,8 @@
+# Ignore virtualenv, build and secrets
+
+.esphome/
+.pio/
+.env
+secrets.yaml
+*.pyc
+__pycache__/

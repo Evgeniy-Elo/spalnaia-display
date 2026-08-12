@@ -1,0 +1,135 @@
+esphome:
+  name: spalnaia_display
+  friendly_name: "Spalnaia Display"
+
+esp8266:
+  board: d1_mini
+
+# Wi‑Fi & OTA & API (нужно для связи с Home Assistant)
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  # Если в Home Assistant включено шифрование, добавьте key: "..."
+  
+ota:
+  password: !secret ota_password
+
+# Home Assistant sensors: получаем данные термостата из HA
+sensor:
+  - platform: homeassistant
+    id: ha_current_temp
+    entity_id: climate.spalnaia
+    attribute: current_temperature
+    name: "HA Spalnaia Current Temp"
+  - platform: homeassistant
+    id: ha_target_temp
+    entity_id: climate.spalnaia
+    attribute: temperature
+    name: "HA Spalnaia Target Temp"
+
+text_sensor:
+  - platform: homeassistant
+    id: ha_hvac_action
+    entity_id: climate.spalnaia
+    attribute: hvac_action
+    name: "HA Spalnaia HVAC Action"
+  - platform: homeassistant
+    id: ha_preset
+    entity_id: climate.spalnaia
+    attribute: preset_mode
+    name: "HA Spalnaia Preset"
+
+# SPI bus for the ST7789 display (пины — пример, согласуем с вашей платой)
+spi:
+  clk_pin: D5
+  mosi_pin: D7
+  id: spi_bus
+
+# Шрифты: положите файлы шрифтов в папку config/esphome/fonts/
+font:
+  - file: "fonts/Roboto-Regular.ttf"
+    id: font_large
+    size: 48
+  - file: "fonts/Roboto-Medium.ttf"
+    id: font_medium
+    size: 20
+  - file: "fonts/Roboto-Regular.ttf"
+    id: font_small
+    size: 12
+
+# Дисплей: пример для ST7789 240x240. Пины — примерные (проверьте схему вашей платы).
+display:
+  - platform: st7789v
+    model: "ST7789"
+    reset_pin: D4
+    dc_pin: D3
+    cs_pin: D8
+    rotation: 0
+    lambda: |-
+      // Быстрая отрисовка фона
+      it.fill(COLOR_BLACK);
+
+      // Считываем значения из HA
+      float cur = id(ha_current_temp).state;
+      float target = id(ha_target_temp).state;
+      std::string hvac = id(ha_hvac_action).state;
+      std::string preset = id(ha_preset).state;
+
+      // Большая цифра текущей температуры
+      it.printf(120, 90, id(font_large), TextAlign::BASELINE_CENTER, "%.1f°C", cur);
+
+      // Маленькая метка "Текущая температура"
+      it.print(120, 125, id(font_small), TextAlign::BASELINE_CENTER, "ТЕКУЩАЯ ТЕМПЕРАТУРА");
+
+      // Стрелка / шкала (упрощённая)
+      // рисуем дугу / окружность как визуальная основа
+      it.draw_circle(120, 120, 95, COLOR_DARK_GREY);
+      // расчёт угла для стрелки от 5..35°C в диапазоне ~-130..+130 градусов
+      float minT = 5.0;
+      float maxT = 35.0;
+      float angle = (cur - minT) / (maxT - minT);
+      if (angle < 0) angle = 0;
+      if (angle > 1) angle = 1;
+      float deg = -130.0 + angle * 260.0; // градусы
+      float rad = deg * 3.14159f / 180.0f;
+      int cx = 120;
+      int cy = 120;
+      int len = 70;
+      int x2 = cx + int(len * cos(rad));
+      int y2 = cy + int(len * sin(rad));
+      it.line(cx, cy, x2, y2, COLOR_WHITE);
+
+      // Режим отопления / иконка
+      if (hvac == "heating" || hvac == "heat" || hvac == "on") {
+        it.print(120, 150, id(font_medium), TextAlign::BASELINE_CENTER, "ОБОГРЕВ");
+      } else {
+        it.print(120, 150, id(font_medium), TextAlign::BASELINE_CENTER, "ОЖИДАНИЕ");
+      }
+
+      // Целевое значение и preset снизу
+      it.printf(120, 180, id(font_medium), TextAlign::BASELINE_CENTER, "Уст. %.1f°C  %s", target, preset.c_str());
+
+# (опционально) кнопки для управления: нажатие кнопки увеличит/уменьшит целевую температуру
+binary_sensor:
+  - platform: gpio
+    pin: D6
+    name: "Button +"
+    on_press:
+      then:
+        - homeassistant.service:
+            service: climate.set_temperature
+            data:
+              entity_id: climate.spalnaia
+              temperature: !lambda 'return id(ha_target_temp).state + 0.5;'
+  - platform: gpio
+    pin: D0
+    name: "Button -"
+    on_press:
+      then:
+        - homeassistant.service:
+            service: climate.set_temperature
+            data:
+              entity_id: climate.spalnaia
+              temperature: !lambda 'return id(ha_target_temp).state - 0.5;'
